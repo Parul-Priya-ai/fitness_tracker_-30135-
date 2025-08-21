@@ -1,0 +1,250 @@
+import streamlit as st
+import pandas as pd
+from backend_hr import Database
+
+# Initialize database connection
+# NOTE: Replace with your PostgreSQL credentials
+db = Database(
+    dbname="HR_Directory",
+    user="your_user",
+    password="your_password",
+    host="localhost",
+    port="5432"
+)
+
+# --- Authentication ---
+def login():
+    """Renders the login page."""
+    st.title("Parul 30135 HR Directory Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        role = db.authenticate_user(username, password)
+        if role:
+            st.session_state['logged_in'] = True
+            st.session_state['username'] = username
+            st.session_state['role'] = role
+            st.success(f"Welcome, {username}! You are logged in as a {role}.")
+            st.rerun()
+        else:
+            st.error("Invalid username or password.")
+
+# --- Main Application Layout ---
+def app():
+    """Main application logic and UI."""
+    st.sidebar.title(f"Logged in as: {st.session_state.get('role')}")
+    st.sidebar.markdown("---")
+    
+    menu_items = {
+        "admin": ["Dashboard", "Manage Employees", "Manage Departments", "Manage Job Titles", "Business Insights", "Logout"],
+        "manager": ["Dashboard", "View Employees", "Business Insights", "Logout"],
+        "employee": ["Dashboard", "My Profile", "Logout"]
+    }
+    
+    role = st.session_state.get('role')
+    selection = st.sidebar.radio("Main Menu", menu_items.get(role, []))
+    
+    st.title("Parul 30135 HR Directory")
+    
+    if selection == "Dashboard":
+        st.subheader("Welcome to the HR Dashboard")
+        st.write("Use the sidebar to navigate the application.")
+        
+    elif selection == "Manage Employees" and role == "admin":
+        st.subheader("Employee Management (CRUD)")
+        employee_crud_page()
+    
+    elif selection == "View Employees" and role == "manager":
+        st.subheader("Employee Directory")
+        view_employees_page()
+
+    elif selection == "My Profile" and role == "employee":
+        st.subheader("My Profile")
+        view_my_profile_page(st.session_state.get('username'))
+
+    elif selection == "Manage Departments" and role == "admin":
+        st.subheader("Department Management")
+        department_management_page()
+        
+    elif selection == "Manage Job Titles" and role == "admin":
+        st.subheader("Job Title Management")
+        job_title_management_page()
+
+    elif selection == "Business Insights":
+        st.subheader("Business Insights")
+        business_insights_page()
+
+    elif selection == "Logout":
+        st.session_state['logged_in'] = False
+        st.success("You have been logged out.")
+        st.rerun()
+
+# --- Employee CRUD UI Functions ---
+def employee_crud_page():
+    """UI for Employee CRUD operations."""
+    crud_mode = st.radio("Choose CRUD operation", ["Create", "View/Search", "Update", "Deactivate"])
+
+    if crud_mode == "Create":
+        st.markdown("### Create Employee")
+        create_employee_form()
+    
+    elif crud_mode == "View/Search":
+        st.markdown("### View and Search Employees")
+        view_employees_page()
+        
+    elif crud_mode == "Update":
+        st.markdown("### Update Employee")
+        update_employee_form()
+
+    elif crud_mode == "Deactivate":
+        st.markdown("### Deactivate Employee")
+        deactivate_employee_form()
+
+def create_employee_form():
+    """Form to create a new employee."""
+    with st.form("create_employee_form"):
+        st.markdown("**Personal Information**")
+        first_name = st.text_input("First Name")
+        last_name = st.text_input("Last Name")
+        date_of_birth = st.date_input("Date of Birth")
+        gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+        contact_number = st.text_input("Contact Number")
+        email = st.text_input("Email")
+        
+        st.markdown("**Employment Information**")
+        job_titles = db.get_all_job_titles()
+        job_title = st.selectbox("Job Title", job_titles)
+        departments = db.get_all_departments()
+        department = st.selectbox("Department", departments)
+        date_of_joining = st.date_input("Date of Joining")
+        employment_status = st.selectbox("Employment Status", ["Active", "On Leave", "Terminated", "Inactive"])
+        
+        st.markdown("**Compensation & Emergency Contact**")
+        salary = st.number_input("Salary", min_value=0)
+        pay_grade = st.text_input("Pay Grade")
+        emergency_contact_name = st.text_input("Emergency Contact Name")
+        emergency_contact_phone = st.text_input("Emergency Contact Phone")
+        
+        submitted = st.form_submit_button("Add Employee")
+        if submitted:
+            employee_data = {
+                'first_name': first_name, 'last_name': last_name, 'date_of_birth': date_of_birth,
+                'gender': gender, 'contact_number': contact_number, 'email': email,
+                'job_title': job_title, 'department': department, 'manager_id': None,
+                'date_of_joining': date_of_joining, 'employment_status': employment_status,
+                'salary': salary, 'pay_grade': pay_grade, 'emergency_contact_name': emergency_contact_name,
+                'emergency_contact_phone': emergency_contact_phone
+            }
+            db.create_employee(employee_data)
+            st.success(f"Employee {first_name} {last_name} created successfully!")
+
+def view_employees_page():
+    """UI to view and search employees."""
+    search_col, button_col = st.columns([3, 1])
+    with search_col:
+        search_term = st.text_input("Search Employee (by name or department)")
+    with button_col:
+        st.markdown("##") # Space
+        search_button = st.button("Search")
+    
+    if search_term and search_button:
+        df = pd.DataFrame(db.search_employees(search_term, 'first_name'))
+    else:
+        df = pd.DataFrame(db.get_all_employees())
+    
+    st.dataframe(df)
+
+def update_employee_form():
+    """Form to update an existing employee."""
+    emp_id = st.number_input("Enter Employee ID to Update", min_value=1)
+    if st.button("Load Employee Data"):
+        employee = db.get_employee_details(emp_id)
+        if employee:
+            with st.form("update_employee_form"):
+                st.markdown(f"**Updating Employee: {employee['first_name']} {employee['last_name']}**")
+                
+                # Pre-fill form with current data
+                first_name = st.text_input("First Name", value=employee['first_name'])
+                last_name = st.text_input("Last Name", value=employee['last_name'])
+                
+                # ... other fields ...
+                
+                submitted = st.form_submit_button("Update Employee")
+                if submitted:
+                    # Collect and pass data to the backend
+                    updated_data = {
+                        'first_name': first_name, 'last_name': last_name, # etc.
+                    }
+                    db.update_employee(emp_id, updated_data)
+                    st.success("Employee updated successfully!")
+        else:
+            st.error("Employee not found.")
+
+def deactivate_employee_form():
+    """Form to deactivate an employee."""
+    emp_id = st.number_input("Enter Employee ID to Deactivate", min_value=1)
+    if st.button("Deactivate Employee"):
+        db.deactivate_employee(emp_id)
+        st.success(f"Employee with ID {emp_id} has been deactivated.")
+
+# --- Department & Job Title Management UI ---
+def department_management_page():
+    """UI for Department management."""
+    dept_name = st.text_input("New Department Name")
+    if st.button("Add Department"):
+        db.create_department(dept_name)
+        st.success(f"Department '{dept_name}' added.")
+    st.markdown("### Existing Departments")
+    st.write(db.get_all_departments())
+    
+def job_title_management_page():
+    """UI for Job Title management."""
+    job_title = st.text_input("New Job Title")
+    if st.button("Add Job Title"):
+        db.create_job_title(job_title)
+        st.success(f"Job title '{job_title}' added.")
+    st.markdown("### Existing Job Titles")
+    st.write(db.get_all_job_titles())
+
+# --- Business Insights UI ---
+def business_insights_page():
+    """UI for business insights."""
+    insights = db.get_insights()
+    if insights:
+        st.markdown("### Key Metrics")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Employees", insights['total_employees'])
+        with col2:
+            st.metric("Total Monthly Payroll", f"${insights['total_payroll']:.2f}")
+        with col3:
+            st.metric("Average Salary", f"${insights['avg_salary']:.2f}")
+
+        st.markdown("---")
+        st.markdown("### Salary Analysis")
+        min_salary = insights.get('min_salary', 0)
+        max_salary = insights.get('max_salary', 0)
+        st.info(f"**Minimum Active Employee Salary:** ${min_salary:.2f}")
+        st.info(f"**Maximum Active Employee Salary:** ${max_salary:.2f}")
+
+        st.markdown("---")
+        st.markdown("### Employees per Department")
+        df_dept = pd.DataFrame(insights['employees_per_dept'])
+        st.bar_chart(df_dept.set_index('dept_name'))
+
+# --- View My Profile UI ---
+def view_my_profile_page(username):
+    """UI for an employee to view their own profile."""
+    # Note: This is a placeholder. You'll need to link username to emp_id.
+    # For a full implementation, you'd need a user table that maps to employees.
+    st.warning("Feature not fully implemented. In a production app, you would fetch the employee's details based on their user ID.")
+    st.write(f"Hello, {username}! This page will show your personal and employment details.")
+
+# --- Main app flow ---
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+
+if st.session_state['logged_in']:
+    app()
+else:
+    login()
