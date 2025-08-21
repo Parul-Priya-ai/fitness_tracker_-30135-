@@ -1,0 +1,206 @@
+import streamlit as st
+import backend_fit as db
+from datetime import date, timedelta
+
+st.set_page_config(layout="wide")
+
+st.title("Parul's Personal Fitness Tracker")
+
+# Check if a user is logged in (using a simple session state)
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = None
+
+# Sidebar for user selection/login
+with st.sidebar:
+    st.header("User Profile")
+    all_users = db.get_all_users()
+    user_options = {f"{user[1]} ({user[2]})": user[0] for user in all_users}
+    selected_user = st.selectbox("Select or Create User", options=["New User"] + list(user_options.keys()))
+    
+    if selected_user == "New User":
+        st.subheader("Create New User")
+        new_name = st.text_input("Name")
+        new_email = st.text_input("Email")
+        new_weight = st.number_input("Weight (kg)", min_value=0.0)
+        if st.button("Create User"):
+            user_id = db.create_user(new_name, new_email, new_weight)
+            if user_id:
+                st.session_state.user_id = user_id
+                st.success("User created successfully!")
+                st.experimental_rerun()
+    else:
+        st.session_state.user_id = user_options[selected_user]
+        st.success(f"Logged in as {selected_user}")
+        user_data = db.read_user(st.session_state.user_id)
+        if user_data:
+            st.markdown(f"**Name:** {user_data[1]}")
+            st.markdown(f"**Email:** {user_data[2]}")
+            st.markdown(f"**Weight:** {user_data[3]} kg")
+            if st.button("Log Out"):
+                st.session_state.user_id = None
+                st.experimental_rerun()
+
+# Main application content
+if st.session_state.user_id:
+    user_id = st.session_state.user_id
+    
+    st.header("Dashboard")
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Workout Tracker", "Goals", "Friends & Leaderboard", "Business Insights", "Manage Profile"])
+
+    # --- Workout Tracker Tab (CRUD for Workouts) ---
+    with tab1:
+        st.subheader("Log a New Workout")
+        with st.form("new_workout_form"):
+            workout_date = st.date_input("Date", date.today())
+            duration = st.number_input("Duration (minutes)", min_value=1)
+            notes = st.text_area("Notes")
+
+            st.markdown("---")
+            st.subheader("Exercises")
+            
+            num_exercises = st.number_input("Number of exercises", min_value=1, value=1)
+            exercises_list = []
+            for i in range(num_exercises):
+                st.markdown(f"**Exercise {i+1}**")
+                ex_name = st.text_input("Exercise Name", key=f"ex_name_{i}")
+                ex_reps = st.number_input("Reps", min_value=1, key=f"ex_reps_{i}")
+                ex_sets = st.number_input("Sets", min_value=1, key=f"ex_sets_{i}")
+                ex_weight = st.number_input("Weight Lifted (kg)", min_value=0.0, key=f"ex_weight_{i}")
+                exercises_list.append({
+                    "name": ex_name,
+                    "reps": ex_reps,
+                    "sets": ex_sets,
+                    "weight": ex_weight
+                })
+
+            submitted = st.form_submit_button("Log Workout")
+            if submitted:
+                if db.create_workout(user_id, workout_date, duration, notes, exercises_list):
+                    st.success("Workout logged successfully!")
+                else:
+                    st.error("Failed to log workout.")
+        
+        st.subheader("Workout History")
+        workouts = db.read_workouts(user_id)
+        if workouts:
+            for workout in workouts:
+                with st.expander(f"Workout on {workout['date']} - {workout['duration']} mins"):
+                    st.write(f"**Notes:** {workout['notes']}")
+                    st.write("**Exercises:**")
+                    for ex in workout['exercises']:
+                        st.write(f"- {ex['name']}: {ex['sets']} sets of {ex['reps']} reps with {ex['weight']} kg")
+                    if st.button("Delete this workout", key=f"del_workout_{workout['workout_id']}"):
+                        if db.delete_workout(workout['workout_id']):
+                            st.success("Workout deleted successfully!")
+                            st.experimental_rerun()
+                        else:
+                            st.error("Failed to delete workout.")
+        else:
+            st.info("No workouts logged yet.")
+
+    # --- Goals Tab (CRUD for Goals) ---
+    with tab2:
+        st.subheader("Set a New Goal")
+        with st.form("new_goal_form"):
+            goal_type = st.selectbox("Goal Type", ["Workout 5 times a week", "Run a 5k", "Lift a certain weight"])
+            target_value = st.number_input("Target Value (e.g., number of workouts/k)", min_value=1)
+            start_date = st.date_input("Start Date", date.today())
+            end_date = st.date_input("End Date", date.today() + timedelta(days=30))
+            if st.form_submit_button("Set Goal"):
+                if db.create_goal(user_id, goal_type, target_value, start_date, end_date):
+                    st.success("Goal set successfully!")
+                else:
+                    st.error("Failed to set goal.")
+
+        st.subheader("Current and Past Goals")
+        goals = db.read_goals(user_id)
+        if goals:
+            for goal in goals:
+                goal_id, g_type, target, start, end, status = goal
+                st.markdown(f"**{g_type}**")
+                st.write(f"Target: {target}")
+                st.write(f"Period: {start} to {end}")
+                st.write(f"Status: {status}")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Mark as Complete", key=f"complete_{goal_id}"):
+                        db.update_goal_status(goal_id, 'Completed')
+                        st.experimental_rerun()
+                with col2:
+                    if st.button("Delete Goal", key=f"delete_{goal_id}"):
+                        db.delete_goal(goal_id)
+                        st.experimental_rerun()
+        else:
+            st.info("No goals set yet.")
+            
+    # --- Friends and Leaderboard Tab (CRUD for Friends) ---
+    with tab3:
+        st.subheader("Add Friends")
+        friend_email = st.text_input("Friend's Email")
+        if st.button("Add Friend"):
+            if db.create_friend(user_id, friend_email):
+                st.success("Friend added successfully!")
+            else:
+                st.error("Failed to add friend.")
+                
+        st.subheader("My Friends")
+        friends = db.read_friends(user_id)
+        if friends:
+            for friend in friends:
+                st.write(f"- {friend[1]} ({friend[2]})")
+                if st.button("Remove", key=f"remove_friend_{friend[0]}"):
+                    if db.delete_friend(user_id, friend[0]):
+                        st.success("Friend removed.")
+                        st.experimental_rerun()
+                    else:
+                        st.error("Failed to remove friend.")
+        else:
+            st.info("You have no friends yet.")
+
+        st.subheader("Weekly Workout Leaderboard")
+        leaderboard_data = db.get_leaderboard_data('total_minutes', user_id)
+        if leaderboard_data:
+            st.table(leaderboard_data)
+        else:
+            st.info("No leaderboard data for your friends this week.")
+
+    # --- Business Insights Tab ---
+    with tab4:
+        st.subheader("Business Insights")
+        insights = db.get_business_insights()
+        st.markdown(f"**Total Workouts Logged:** {insights.get('total_workouts', 0)}")
+        st.markdown(f"**Total Duration (Minutes):** {insights.get('total_duration_minutes', 0)}")
+        st.markdown(f"**Average Reps per Exercise:** {insights.get('avg_reps_per_exercise', 0):.2f}")
+        st.markdown(f"**Minimum Weight Lifted:** {insights.get('min_weight_lifted', 0)} kg")
+        st.markdown(f"**Maximum Weight Lifted:** {insights.get('max_weight_lifted', 0)} kg")
+
+    # --- Manage Profile Tab (Update/Delete User) ---
+    with tab5:
+        st.subheader("Manage Your Profile")
+        user_data = db.read_user(user_id)
+        if user_data:
+            with st.form("update_profile_form"):
+                current_name = user_data[1]
+                current_email = user_data[2]
+                current_weight = user_data[3]
+                
+                updated_name = st.text_input("Update Name", value=current_name)
+                updated_email = st.text_input("Update Email", value=current_email)
+                updated_weight = st.number_input("Update Weight (kg)", value=current_weight, min_value=0.0)
+                
+                if st.form_submit_button("Update Profile"):
+                    if db.update_user(user_id, updated_name, updated_email, updated_weight):
+                        st.success("Profile updated successfully!")
+                        st.experimental_rerun()
+                    else:
+                        st.error("Failed to update profile.")
+        
+            st.subheader("Danger Zone")
+            if st.button("Delete My Profile", help="This action is irreversible and will delete all your data."):
+                if st.button("Confirm Deletion"):
+                    if db.delete_user(user_id):
+                        st.success("Profile deleted.")
+                        st.session_state.user_id = None
+                        st.experimental_rerun()
+                    else:
+                        st.error("Failed to delete profile.")
